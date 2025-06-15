@@ -9,7 +9,7 @@ module spi_fsm (
   output wire tx_en_o, tx_load_o, rx_en_o, delay_en_o, delay_clear_o,
   
   // external outputs
-  output done_o
+  output wire done_o
 );
 
   typedef enum logic [2:0] {

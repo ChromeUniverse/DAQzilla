@@ -53,7 +53,7 @@ module spi_tx #(
       mosi_reg <= tx_buffer_out[WIDTH-1];
   end
 
-  assign MOSI_o = mosi_reg;
+  assign MOSI_o = tx_en_i ? mosi_reg : 1'b0;
 
   // Bit counter
   logic [$clog2(WIDTH):0] tx_counter_value;
