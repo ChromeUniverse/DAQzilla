@@ -3,7 +3,7 @@ create_clock -period 10.000 -name MAIN_CLK [get_ports CLOCK_100]
 set_property -quiet -dict {PACKAGE_PIN F14 IOSTANDARD LVCMOS33} [get_ports {CLOCK_100}]
 
 # Using BTN[3] as a clock, so need to override using dedicated clock routing
-set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets BTN_IBUF[3]]
+# set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets BTN_IBUF[3]]
 
 # Set Bank 0 voltage
 set_property CFGBVS VCCO [current_design]
@@ -135,5 +135,11 @@ set_property -dict {PACKAGE_PIN M3 IOSTANDARD LVCMOS33} [get_ports {GPIO1[3]}]
 set_property -dict {PACKAGE_PIN K3 IOSTANDARD LVCMOS33} [get_ports {GPIO1[4]}]
 set_property -dict {PACKAGE_PIN J6 IOSTANDARD LVCMOS33} [get_ports {GPIO1[5]}]
 
-# PMOD testing
-set_property -quiet -dict {PACKAGE_PIN A14 IOSTANDARD LVCMOS33} [get_ports {CLK_OUT_TEST}]
+# PMOD stuff
+
+# ADS1256 SPI Interface
+set_property -quiet -dict {PACKAGE_PIN A14 IOSTANDARD LVCMOS33} [get_ports {ADS1256_SCLK}]
+set_property -quiet -dict {PACKAGE_PIN B14 IOSTANDARD LVCMOS33} [get_ports {ADS1256_DIN}]   ;# MOSI
+set_property -quiet -dict {PACKAGE_PIN A13 IOSTANDARD LVCMOS33} [get_ports {ADS1256_DOUT}]  ;# MISO
+set_property -quiet -dict {PACKAGE_PIN B13 IOSTANDARD LVCMOS33} [get_ports {ADS1256_CS}]
+set_property -quiet -dict {PACKAGE_PIN B18 IOSTANDARD LVCMOS33} [get_ports {ADS1256_DRDY}]
