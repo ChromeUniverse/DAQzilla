@@ -24,15 +24,18 @@ module ChipInterface(
   assign done = LD[0];
 
   // SPI interface (PMOD)
-  wire MOSI, MISO, SCLK, CS;
+  wire MOSI, MISO, SCLK, CS_L;
   assign MOSI = ADS1256_DIN;
   assign MISO = ADS1256_DOUT;
-  assign CS = ADS1256_CS;
+  assign CS_L = ADS1256_CS;
   assign SCLK = ADS1256_SCLK;
 
   // hardcoding TX buffer with RDATA (01h)
   logic [7:0] tx_buffer;
   assign tx_buffer = 8'h01;
+  
+  spi_mode_t mode;
+  assign mode = SPI_TX_RX;
 
   spi spi_core (
     .reset_i(reset),
@@ -41,10 +44,11 @@ module ChipInterface(
     .tx_buffer_i(tx_buffer),
     .MISO_i(MISO),
     .MOSI_o(MOSI),
-    .CS_o(CS),
+    .CS_L_o(CS_L),
     .SCLK_o(SCLK),
     .rx_buffer_o(),
-    .done_o(done)
+    .done_o(done),
+    .spi_mode_i(mode)
   );
 
 endmodule: ChipInterface

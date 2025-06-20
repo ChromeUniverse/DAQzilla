@@ -5,6 +5,7 @@ module spi_tb;
   logic clock;
   logic reset;
   logic start;
+  spi_mode_t mode;
   logic [7:0] tx_buffer;
   logic MISO;
   wire MOSI, CS, SCLK;
@@ -24,10 +25,11 @@ module spi_tb;
     .tx_buffer_i(tx_buffer),
     .MISO_i(MISO),
     .MOSI_o(MOSI),
-    .CS_o(CS),
+    .CS_L_o(CS),
     .SCLK_o(SCLK),
     .rx_buffer_o(rx_buffer),
-    .done_o(done)
+    .done_o(done),
+    .spi_mode_i(mode)
   );
 
   // Clock generation: 100 MHz (10 ns period)
@@ -46,6 +48,7 @@ module spi_tb;
     clock = 0;
     reset = 1;
     start = 0;
+    mode = SPI_TX_RX;
     tx_buffer = 8'h87;
     MISO = 0;
 
