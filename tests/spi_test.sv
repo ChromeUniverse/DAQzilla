@@ -11,6 +11,7 @@ module spi_tb;
   wire MOSI, CS, SCLK;
   wire [23:0] rx_buffer;
   wire done;
+  logic DRDY, DRDY_en;
 
   // Internal signals for observing FSM state indirectly
   wire tx_en_i, rx_en_i;
@@ -29,7 +30,8 @@ module spi_tb;
     .SCLK_o(SCLK),
     .rx_buffer_o(rx_buffer),
     .done_o(done),
-    .spi_mode_i(mode)
+    .spi_mode_i(mode),
+    .DRDY_L_i(DRDY)
   );
 
   // Clock generation: 100 MHz (10 ns period)
@@ -44,7 +46,33 @@ module spi_tb;
       MISO <= miso_data[miso_bit_index--];
   end
 
+  // assume DRATE = 30kSPS
+  // 33.333us period
   initial begin
+    DRDY = 0;
+    forever begin
+      wait (DRDY_en == 1);
+
+      // DRDY goes high
+      DRDY = 1;
+      #2_000;
+      // DRDY goes low
+      DRDY = 0;
+      #31_333;
+    end
+  end
+
+  initial begin
+
+    // 
+    // Test Case #1:
+    // SPI TX + RX: RDATA, etc.
+    // 
+
+    DRDY_en = 1;
+
+    #4000
+
     clock = 0;
     reset = 1;
     start = 0;
@@ -63,6 +91,27 @@ module spi_tb;
 
     // Wait for the entire transaction to complete
     wait(done);
+
+    // 
+    // Test Case #2:
+    // SPI TX only (SELFCAL)
+    // 
+
+    // TODO
+
+    // 
+    // Test Case #3:
+    // SPI RX only (RDATAC)
+    // 
+
+    // TODO
+
+    // 
+    // Test Case #4:
+    // SPI IDLE (NOP)
+    // 
+
+    // TODO
 
     #20000;
     $display("Received data: %h", rx_buffer);
