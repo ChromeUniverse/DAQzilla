@@ -74,11 +74,11 @@ module can_bit_stuffer_test ();
     @(posedge clock);
     start = 0;
     
-    for (int i = 0; i < 190000; i++) begin
-      @(negedge clock);
-    end
+    // for (int i = 0; i < 190000; i++) begin
+    //   @(negedge clock);
+    // end
 
-    // wait(done);
+    wait(done);
 
     @(negedge clock);
     

@@ -90,6 +90,7 @@ module can_bit_stuffer_FSM_mealy (
   // Bit stuffing
   input wire start_i,
   input wire stuff_i, stuffable_count_done_i, full_count_done_i,
+  input wire wait_count_done_i,
 
   // Datapath control signals:
 
@@ -110,11 +111,14 @@ module can_bit_stuffer_FSM_mealy (
     select_o, 
     done_o,
     bus_idle_o,
-    can_clk_en_o
+    can_clk_en_o,
+
+    wait_count_en_o,
+    wait_count_clr_o
 );
 
-  typedef enum logic [1:0] { 
-    IDLE, CRC_COMPUTE, SHIFT, ILLEGAL_STATE
+  typedef enum logic [2:0] { 
+    IDLE, CRC_COMPUTE, SHIFT, WAIT, ILLEGAL_STATE
   } state_t;
 
   state_t state, next_state;
@@ -135,7 +139,9 @@ module can_bit_stuffer_FSM_mealy (
       CRC_COMPUTE:
         next_state = (crc_done_i) ? SHIFT : CRC_COMPUTE;
       SHIFT:
-        next_state = (full_count_done_i) ? IDLE : SHIFT;
+        next_state = (full_count_done_i) ? WAIT : SHIFT;
+      WAIT:
+        next_state = (wait_count_done_i) ? IDLE : WAIT;
       default: 
         next_state = ILLEGAL_STATE;
     endcase
@@ -165,6 +171,9 @@ module can_bit_stuffer_FSM_mealy (
     done_o = 1'b0;
     can_clk_en_o = 1'b0;
 
+    wait_count_en_o = 1'b0;
+    wait_count_clr_o = 1'b0;
+
     case (state)
       IDLE:
         begin
@@ -176,6 +185,7 @@ module can_bit_stuffer_FSM_mealy (
             crc_pipo_load_o = 1'b1;
             crc_count_clear_o = 1'b1;
             crc_clear_o = 1'b1;
+            wait_count_clr_o = 1'b1;
           end
         end
 
@@ -198,8 +208,10 @@ module can_bit_stuffer_FSM_mealy (
         if (stuff_i) begin
           select_o =  1'b1;
           sipo_en_o = 1'b1;
-        end else if (full_count_done_i)
-          done_o = 1;
+        end else if (full_count_done_i) begin
+          done_o = 1'b0;
+          wait_count_clr_o = 1'b1;
+        end
         else if (stuffable_count_done_i) begin
           pipo_en_o = 1'b1;
           count_en_o = 1'b1;
@@ -209,6 +221,13 @@ module can_bit_stuffer_FSM_mealy (
           count_en_o = 1'b1;
         end
       end        
+
+      WAIT: begin
+        wait_count_en_o = 1'b1;
+        if (wait_count_done_i) begin
+          done_o = 1'b1;
+        end
+      end 
           
       // STUFF:    out_vector = 7'b001_0010;
       // DONE:     out_vector = 7'b000_0001;
@@ -235,6 +254,7 @@ module can_bit_stuffer (
   
   // Bit stuffing
   wire stuff, stuffable_count_done, full_count_done;
+  wire wait_count_done;
 
   // FSM control signals:
 
@@ -243,6 +263,7 @@ module can_bit_stuffer (
 
   // Bit stuffing
   wire pipo_en, pipo_load, sipo_en, count_en, count_clr, select, fsm_done, bus_idle, can_clk_en;
+  wire wait_count_en, wait_count_clr;
 
   can_bit_stuffer_FSM_mealy FSM(
     .clock_i(clock_i),
@@ -256,6 +277,7 @@ module can_bit_stuffer (
     .stuff_i(stuff),
     .stuffable_count_done_i(stuffable_count_done),
     .full_count_done_i(full_count_done),
+    .wait_count_done_i(wait_count_done),
 
     // Control: CRC
     .crc_pipo_en_o(crc_pipo_en),
@@ -274,7 +296,9 @@ module can_bit_stuffer (
     .select_o(select), 
     .done_o(fsm_done),
     .bus_idle_o(bus_idle),
-    .can_clk_en_o(can_clk_en)
+    .can_clk_en_o(can_clk_en),
+    .wait_count_en_o(wait_count_en),
+    .wait_count_clr_o(wait_count_clr)
   );
 
   // DATAPATH: CRC generation
@@ -423,6 +447,19 @@ module can_bit_stuffer (
 
   assign done_o = fsm_done;
 
+  // DEBUGGING: a counter that delays transmitting again for like a second or two idk
+  logic [26:0] wait_counter_out;
+  Counter #(.WIDTH(27)) wait_counter (
+    .en(wait_count_en),
+    .clear(wait_count_clr),
+    .load(1'b0),
+    .up(1'b1),
+    .clock(clock_i),
+    .D(27'd1),
+    .Q(wait_counter_out)
+  );
+
+  assign wait_count_done = (wait_counter_out == 27'd10_000_000);
 
   // CAN TX serial output: 
   // if not driven by serializer, bus shall remain in a recessive state (1)
