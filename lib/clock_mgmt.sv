@@ -5,6 +5,7 @@ module clock_div #(
 ) (
   input  wire clock_in_i,
   input  wire reset_i,
+  input  wire clear_i,
   input  wire en_i,
   output wire clock_out_o
 );
@@ -12,7 +13,7 @@ module clock_div #(
   logic [EXP_FACTOR-1:0] clk_div;
 
   always_ff @(posedge clock_in_i) begin
-    if (reset_i)
+    if (reset_i | clear_i)
       clk_div <= '0;
     else if (en_i)
       clk_div <= clk_div + 1;

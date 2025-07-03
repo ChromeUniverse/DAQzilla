@@ -1,12 +1,11 @@
 `default_nettype none
 
-module spi_tx_tb;
+module spi_tx_test;
 
   logic clk, rst;
   logic tx_en, tx_load, SCLK;
   logic [7:0] tx_data;
   logic MOSI;
-  logic tx_done;
 
   spi_tx #(.WIDTH(8)) dut (
     .clock_i(clk),
@@ -15,8 +14,7 @@ module spi_tx_tb;
     .tx_load_i(tx_load),
     .SCLK_i(SCLK),
     .tx_buffer_i(tx_data),
-    .MOSI_o(MOSI),
-    .tx_done_o(tx_done)
+    .MOSI_o(MOSI)
   );
 
   // clock generation
@@ -27,7 +25,7 @@ module spi_tx_tb;
 
   // monitor
   initial begin
-    $monitor("Time: %4t | MOSI: %b, TX_DONE: %b", $time, MOSI, tx_done);
+    $monitor("Time: %4t | MOSI: %b", $time, MOSI);
   end
 
   initial begin

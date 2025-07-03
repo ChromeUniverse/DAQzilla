@@ -4,8 +4,6 @@ module spi_clk_gen #(
   parameter EXP_FACTOR = 6
 ) (
   input  wire clock_i,
-  input  wire tx_en_i,
-  input  wire rx_en_i,
   input  wire reset_i,
   input  wire en_i,
   output wire SCLK_o
@@ -17,9 +15,10 @@ module spi_clk_gen #(
     .clock_in_i(clock_i),
     .clock_out_o(clk_divided),
     .reset_i(reset_i),
+    .clear_i(~en_i),
     .en_i(en_i)
   );
 
-  assign SCLK_o = (tx_en_i | rx_en_i) ? clk_divided : 1'b0;
+  assign SCLK_o = (en_i) ? clk_divided : 1'b0;
 
 endmodule
