@@ -40,7 +40,12 @@ module spi_fsm (
       TRANSFER:
         next_state = (bit_count_done_i) ? HOLD_DELAY : TRANSFER;
       HOLD_DELAY:
-        next_state = (hold_delay_done_i) ? IDLE : HOLD_DELAY;
+        if (~hold_delay_done_i)
+          next_state = HOLD_DELAY;
+        else if (start_i) 
+          next_state = TRANSFER;
+        else 
+          next_state = IDLE;
       
     endcase
   end
@@ -68,12 +73,24 @@ module spi_fsm (
         end else
           shift_en_o = 1'b1;
       HOLD_DELAY:
-        if (hold_delay_done_i)
-          done_o = 1'b1;
-        else begin
+        // if (hold_delay_done_i)
+        //   done_o = 1'b1;
+        // else begin
+        //   hold_delay_en_o = 1'b1;
+        //   shift_en_o = 1'b1;
+        // end
+
+        if (~hold_delay_done_i) begin
           hold_delay_en_o = 1'b1;
           shift_en_o = 1'b1;
+        end else begin
+          done_o = 1'b1;
+          if (start_i) begin
+            tx_load_o = 1'b1;
+            bit_count_clear_o = 1'b1;
+          end
         end
+
       default:
         ;
     endcase
@@ -154,7 +171,9 @@ module spi #(
   // SPI TX
   spi_tx #(.WIDTH(8)) spi_tx_unit (
     .clock_i(clock_i),
-    .reset_i(reset_i),
+    // NOTE: `bit_count_clear` also clears internal MOSI output register
+    // when transitioning into TRANSFER state. also prevents glitching! :)
+    .reset_i(reset_i | bit_count_clear),  
     .tx_en_i(shift_en),
     .tx_load_i(tx_load),
     .SCLK_i(SCLK_o),
