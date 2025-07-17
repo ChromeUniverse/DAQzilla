@@ -1,7 +1,7 @@
 `default_nettype none
 
 typedef enum logic [2:0] { 
-  WAKEUP, RDATA, RDATAC, SDATAC, SELFCAL, RREG, WREG
+  CMD_NONE, WAKEUP, RDATA, RDATAC, SDATAC, SELFCAL, RREG, WREG
 } transaction_t;
 
 
@@ -255,12 +255,14 @@ module spi_transaction_layer_fsm (
 
       RDATAC_WAIT_DRDY: begin
         CS_L_o = 1'b0;
-        if (~DRDY_L_i) spi_start_o = 1'b1;
+        if (~DRDY_L_i) begin
+          tx_buffer_o = 8'h03;
+          spi_start_o = 1'b1;
+        end
       end
 
       RDATAC_SPI_TRANSFER_0: begin
-        CS_L_o = 1'b0;
-        tx_buffer_o = 8'h03;
+        CS_L_o = 1'b0;        
         if (spi_done_i) delay_t6_count_clear_o = 1'b1;
       end
 
@@ -268,24 +270,31 @@ module spi_transaction_layer_fsm (
       RDATAC_WAIT_T6: begin
         CS_L_o = 1'b0;
         delay_t6_en_o = 1'b1;
-        if (delay_t6_done_i) spi_start_o = 1'b1;
+        if (delay_t6_done_i) begin
+          spi_start_o = 1'b1;
+          tx_buffer_o = 8'h69;
+        end
       end
       
       RDATAC_SPI_TRANSFER_1: begin
         CS_L_o = 1'b0;
-        tx_buffer_o = 8'h69;
-        if (spi_done_i) spi_start_o = 1'b1;
+        if (spi_done_i) begin
+          spi_start_o = 1'b1;
+          tx_buffer_o = 8'h69;
+        end
       end
 
       RDATAC_SPI_TRANSFER_2: begin
         CS_L_o = 1'b0;
         tx_buffer_o = 8'h69;
-        if (spi_done_i) spi_start_o = 1'b1;
+        if (spi_done_i) begin
+          spi_start_o = 1'b1;
+          tx_buffer_o = 8'h69;
+        end
       end
 
       RDATAC_SPI_TRANSFER_3: begin
         CS_L_o = 1'b0;
-        tx_buffer_o = 8'h69;
       end
 
       RDATAC_WAIT_DRDY_C: begin
