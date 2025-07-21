@@ -11,13 +11,25 @@ module spi_transaction_layer_tb;
   logic spi_done;
   logic DRDY_L;
   logic [3:0] reg_addr; // Unused for RDATA
-  transaction_t transaction;
+  logic [23:0] command;
 
   // DUT outputs
   logic done;
   logic spi_start;
   logic CS_L;
   logic [7:0] tx_buf;
+  logic [1:0] read_reg_sel;
+  logic read_reg_load;
+
+  // Commands
+  localparam CMD_NONE_BINARY = 24'h00_00_00;
+  localparam CMD_WAKEUP   = 24'hFF_FF_FF;
+  localparam CMD_RDATA    = 24'h01_FF_FF;
+  localparam CMD_RDATAC   = 24'h03_FF_FF;
+  localparam CMD_SDATAC   = 24'h0F_FF_FF;
+  localparam CMD_SELFCAL  = 24'hF0_FF_FF;
+  localparam CMD_RREG     = 24'h17_00_69;
+  localparam CMD_WREG     = 24'h57_00_69;
 
   // Instantiate DUT
   spi_transaction_layer dut (
@@ -25,8 +37,9 @@ module spi_transaction_layer_tb;
     .reset_i(reset),
     .start_i(start),
     .done_o(done),
-    .transaction_i(transaction),
-    .reg_addr_i(reg_addr),
+    .cmd_i(command),
+    .read_reg_sel(read_reg_sel),
+    .read_reg_load(read_reg_load),
     .spi_start_o(spi_start),
     .spi_done_i(spi_done),
     .CS_L_o(CS_L),
@@ -46,7 +59,7 @@ module spi_transaction_layer_tb;
     spi_done = 0;
     DRDY_L = 1; // DRDY_L active low, so 1 means not ready
 
-    transaction = RDATAC;
+    command = CMD_WREG;
 
     reg_addr = 4'd0; // Unused for RDATA
 
@@ -61,7 +74,7 @@ module spi_transaction_layer_tb;
     // RDATA: single conversion
     // -----------------------------------------------------
 
-    if (transaction == RDATA) begin
+    if (command == CMD_RDATA) begin
       // Start transaction
       start = 1;
       #10;
@@ -139,10 +152,10 @@ module spi_transaction_layer_tb;
     end
 
     // -----------------------------------------------------
-    // TODO: RDATAC/SDATAC: continuous conversions
+    // RDATAC/SDATAC: continuous conversions
     // -----------------------------------------------------
 
-    else if (transaction == RDATAC) begin
+    else if (command == CMD_RDATAC) begin
       // Start transaction
       start = 1;
       #10;
@@ -264,7 +277,7 @@ module spi_transaction_layer_tb;
 
       DRDY_L = 1;
       repeat (200) @(posedge clock);
-      transaction = SDATAC;
+      command = CMD_SDATAC;
       DRDY_L = 0;
       // ---------------------------
 
@@ -287,10 +300,10 @@ module spi_transaction_layer_tb;
     end
 
     // -----------------------------------------------------
-    // TODO: SELFCAL: self-calibration
+    // SELFCAL: self-calibration
     // -----------------------------------------------------
 
-    else if (transaction == SELFCAL) begin
+    else if (command == CMD_SELFCAL) begin
       // Start transaction
       start = 1;
 
@@ -316,7 +329,7 @@ module spi_transaction_layer_tb;
     // RREG: single-register read from SPI peripheral
     // -----------------------------------------------------
 
-    else if (transaction == RREG) begin
+    else if (command == CMD_RREG) begin
       // Start transaction
       start = 1;
 
@@ -363,7 +376,7 @@ module spi_transaction_layer_tb;
     // WREG: single-register write to SPI peripheral
     // -----------------------------------------------------
 
-    else if (transaction == WREG) begin
+    else if (command == CMD_WREG) begin
       // Start transaction
       start = 1;
 
