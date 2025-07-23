@@ -102,27 +102,27 @@ endmodule: spi_fsm
 module spi #(
   parameter WIDTH = 8
 ) (
-  input  wire         reset_i,
-  input  wire         clock_i,
+  input  logic         reset_i,
+  input  logic         clock_i,
 
   // control interface
-  input  wire             start_i,
-  output wire             done_o,
-  input  wire [WIDTH-1:0] tx_buffer_i,
-  output wire [WIDTH-1:0] rx_buffer_o,
+  input  logic             start_i,
+  output logic             done_o,
+  input  logic [WIDTH-1:0] tx_buffer_i,
+  output logic [WIDTH-1:0] rx_buffer_o,
 
   // SPI protocol interface
-  input  wire MISO_i,
-  output wire MOSI_o,
-  output wire SCLK_o,
-  output wire auto_CS_o    // asserted only while a transfer is happening
+  input  logic MISO_i,
+  output logic MOSI_o,
+  output logic SCLK_o,
+  output logic auto_CS_o    // asserted only while a transfer is happening
 );
 
   // FSM status
-  wire bit_count_done, hold_delay_done;
+  logic bit_count_done, hold_delay_done;
 
   // FSM control
-  wire shift_en, tx_load, bit_count_en, bit_count_clear, hold_delay_en;
+  logic shift_en, tx_load, bit_count_en, bit_count_clear, hold_delay_en;
 
   // FSM
   spi_fsm fsm (

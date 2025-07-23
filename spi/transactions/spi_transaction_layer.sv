@@ -35,7 +35,8 @@ function automatic transaction_t decode_transaction(logic [23:0] cmd);
 
 endfunction
 
-
+// TODO: Lots of repetitive code here, need to clean this up.
+// Remember: D.R.Y.
 
 module spi_transaction_layer_fsm (
   input wire clock_i, reset_i,
@@ -44,6 +45,7 @@ module spi_transaction_layer_fsm (
   input wire start_i, spi_done_i, DRDY_L_i, 
   input wire delay_t6_done_i,
   input wire [23:0] cmd_i,
+  input logic post_conversion_delay_done_i,
 
   // Datapath control
   output logic spi_start_o,
@@ -54,6 +56,11 @@ module spi_transaction_layer_fsm (
 
   output logic [1:0] read_reg_sel_i,
   output logic read_reg_load_i,
+
+  output logic conversion_data_ready_o,
+
+  output logic post_conversion_delay_en_o,
+  output logic post_conversion_delay_clear_o,
 
   output logic done_o
 );
@@ -76,6 +83,9 @@ module spi_transaction_layer_fsm (
     RDATAC_SPI_TRANSFER_1,
     RDATAC_SPI_TRANSFER_2,
     RDATAC_SPI_TRANSFER_3,
+    // TODO: might need an intermediate delay state in between these two.
+    // Check MISO and DRDY_L signal traces from tests with the Saleae
+    RDATAC_POST_CONVERSION_DELAY,
     RDATAC_WAIT_DRDY_C,
     RDATAC_SPI_TRANSFER_4,
 
@@ -99,6 +109,7 @@ module spi_transaction_layer_fsm (
 
   state_t state, next_state;
   transaction_t decoded_transaction;
+  logic [23:0] latched_command;
 
   always_ff @(posedge clock_i) begin
     if (reset_i)
@@ -120,7 +131,8 @@ module spi_transaction_layer_fsm (
 
         if (~start_i)
           next_state = IDLE;
-        else           
+        else begin
+          latched_command = cmd_i;
           decoded_transaction = decode_transaction(cmd_i);
 
           case (decoded_transaction)
@@ -131,6 +143,7 @@ module spi_transaction_layer_fsm (
             WREG:     next_state = WREG_SPI_TRANSFER_0;
             default:  next_state = IDLE;
           endcase
+        end
       end
 
       // RDATA
@@ -159,18 +172,42 @@ module spi_transaction_layer_fsm (
       RDATAC_SPI_TRANSFER_2:
         next_state = (spi_done_i) ? RDATAC_SPI_TRANSFER_3 : RDATAC_SPI_TRANSFER_2;
       RDATAC_SPI_TRANSFER_3:
-        next_state = (spi_done_i) ? RDATAC_WAIT_DRDY_C : RDATAC_SPI_TRANSFER_3;
+        next_state = (spi_done_i) ? RDATAC_POST_CONVERSION_DELAY : RDATAC_SPI_TRANSFER_3;
+      RDATAC_POST_CONVERSION_DELAY: begin
+        // next_state = (post_conversion_delay_done_i) ? RDATAC_WAIT_DRDY_C : RDATAC_POST_CONVERSION_DELAY;
+        if (~post_conversion_delay_done_i) 
+          next_state = RDATAC_POST_CONVERSION_DELAY;
+        else begin
+          decoded_transaction = decode_transaction(cmd_i);
+          latched_command = cmd_i;
+          // data not ready -- keep waiting
+          if (DRDY_L_i) 
+            next_state = RDATAC_WAIT_DRDY_C;
+          // 
+          // TODO: maybe require `start_i` to be asserted here as well?
+          // 
+          // data ready and stop command issued
+          else if (decoded_transaction == SDATAC)
+            next_state = RDATAC_SPI_TRANSFER_4;
+          // data ready and no stop command issued
+          else
+            next_state = RDATAC_SPI_TRANSFER_1;
+        end
+      end
       RDATAC_WAIT_DRDY_C: begin
         decoded_transaction = decode_transaction(cmd_i);
+        latched_command = cmd_i;
+        // data not ready -- keep waiting
         if (DRDY_L_i) 
-          // data not ready -- keep waiting
           next_state = RDATAC_WAIT_DRDY_C;
+        // 
         // TODO: maybe require `start_i` to be asserted here as well?
+        // 
+        // data ready and stop command issued
         else if (decoded_transaction == SDATAC)
-          // data ready and stop command issued
           next_state = RDATAC_SPI_TRANSFER_4;
+        // data ready and no stop command issued
         else
-          // data ready and no stop command issued
           next_state = RDATAC_SPI_TRANSFER_1;
       end
       RDATAC_SPI_TRANSFER_4:
@@ -178,6 +215,14 @@ module spi_transaction_layer_fsm (
 
 
       // SELFCAL
+      // TODO: calibration is only complete once DRDY_L goes low again
+      // "DRDY goes high at the beginning of the calibration. It goes low after the calibration
+      // completes and settled data is ready. Do not send additional commands after issuing 
+      // this command until DRDY goes low indicating that the calibration is complete."
+      // 
+      // TODO: don't need to assert CS_L for this to work.
+      // We just need to wait until calibration is finished for completedness.
+      
       SELFCAL_SPI_TRANSFER:
         next_state = (spi_done_i) ? DONE : SELFCAL_SPI_TRANSFER;
 
@@ -199,8 +244,24 @@ module spi_transaction_layer_fsm (
       WREG_SPI_TRANSFER_2:
         next_state = (spi_done_i) ? DONE : WREG_SPI_TRANSFER_2;
 
-      DONE: 
-        next_state = IDLE;
+      DONE: begin
+        decoded_transaction = TRANSACTION_NONE;
+        latched_command = cmd_i;
+
+        if (~start_i)
+          next_state = IDLE;
+        else           
+          decoded_transaction = decode_transaction(cmd_i);
+
+          case (decoded_transaction)
+            RDATA:    next_state = RDATA_WAIT_DRDY;
+            RDATAC:   next_state = RDATAC_WAIT_DRDY;
+            SELFCAL:  next_state = SELFCAL_SPI_TRANSFER;
+            RREG:     next_state = RREG_SPI_TRANSFER_0;
+            WREG:     next_state = WREG_SPI_TRANSFER_0;
+            default:  next_state = IDLE;
+          endcase
+      end
 
       default:
         next_state = ILLEGAL_STATE;
@@ -228,6 +289,10 @@ module spi_transaction_layer_fsm (
     read_reg_sel_i = 2'b00;
     read_reg_load_i = 1'b0;
 
+    conversion_data_ready_o = 1'b0;
+    post_conversion_delay_en_o = 1'b0;
+    post_conversion_delay_clear_o = 1'b0;
+
     case (state)
 
       IDLE: begin
@@ -239,12 +304,12 @@ module spi_transaction_layer_fsm (
             end
             RREG: begin
               spi_start_o = 1'b1;
-              reg_address = cmd_i[19:16];
+              reg_address = latched_command[19:16];
               tx_buffer_o = {4'h1, reg_address};
             end
             WREG: begin
               spi_start_o = 1'b1;
-              reg_address = cmd_i[19:16];
+              reg_address = latched_command[19:16];
               tx_buffer_o = {4'h5, reg_address};
             end
             default: ;
@@ -362,10 +427,33 @@ module spi_transaction_layer_fsm (
 
       RDATAC_SPI_TRANSFER_3: begin
         CS_L_o = 1'b0;
+        
+        // clear delay counter
+        post_conversion_delay_clear_o = 1'b1;
+        
         if (spi_done_i) begin
           // LSB stored in register 3
           read_reg_load_i = 1'b1;
-          read_reg_sel_i = 2'b11;
+          read_reg_sel_i = 2'b11;          
+        end
+      end
+
+      RDATAC_POST_CONVERSION_DELAY: begin
+        CS_L_o = 1'b0;
+        post_conversion_delay_en_o = 1'b1;
+        if (post_conversion_delay_done_i) begin
+          conversion_data_ready_o = 1'b1;
+
+          // edge case: DRDY_L doesn't go low immeadiately after conversion delay
+          // had to do this janky ahh fix because i was too lazy to implement proper DRDL_Y logic 
+          // in the BFM for the ADS1256 lmao. check FSM next state logic above for more details.
+          // bro i swear this makes logical sense. trust. please.
+          if (~DRDY_L_i) begin
+            spi_start_o = 1'b1;
+            if (decoded_transaction == SDATAC) begin
+              tx_buffer_o = 8'h0F;
+            end
+          end
         end
       end
 
@@ -440,20 +528,38 @@ module spi_transaction_layer_fsm (
         CS_L_o = 1'b0;
         if (spi_done_i) begin          
           spi_start_o = 1'b1;
-          WREG_data = cmd_i[7:0];
+          WREG_data = latched_command[7:0];
           tx_buffer_o = WREG_data;
         end
       end
 
       WREG_SPI_TRANSFER_2: begin
         CS_L_o = 1'b0;
-        // TODO: get ACTUAL data to write to this register
-        tx_buffer_o = 8'h69;
       end
       
       DONE: begin
         done_o = 1'b1;
         CS_L_o = 1'b1;
+
+        if (start_i) begin
+          case (decoded_transaction)
+            SELFCAL: begin
+              spi_start_o = 1'b1;
+              tx_buffer_o = 8'hF0;
+            end
+            RREG: begin
+              spi_start_o = 1'b1;
+              reg_address = latched_command[19:16];
+              tx_buffer_o = {4'h1, reg_address};
+            end
+            WREG: begin
+              spi_start_o = 1'b1;
+              reg_address = latched_command[19:16];
+              tx_buffer_o = {4'h5, reg_address};
+            end
+            default: ;
+          endcase
+        end
       end
       
       default:
@@ -470,6 +576,7 @@ module spi_transaction_layer (
   input wire start_i,
   output wire done_o,
   input wire [23:0] cmd_i,
+  output logic conversion_data_ready_o,
 
   // Read register signals
   output wire [1:0] read_reg_sel,
@@ -486,10 +593,12 @@ module spi_transaction_layer (
 );
 
   // FSM status
-  wire delay_t6_done;
+  logic delay_t6_done;
+  logic post_conversion_delay_done;
 
   // FSM control
-  logic delay_t6_count_en, DRDY_L, delay_t6_count_clear;
+  logic delay_t6_count_en, delay_t6_count_clear, DRDY_L;
+  logic post_conversion_delay_en, post_conversion_delay_clear;
 
   spi_transaction_layer_fsm FSM (
     .clock_i(clock_i),
@@ -506,7 +615,11 @@ module spi_transaction_layer (
     .CS_L_o(CS_L_o),
     .tx_buffer_o(tx_buffer_o),
     .read_reg_load_i(read_reg_load),
-    .read_reg_sel_i(read_reg_sel)
+    .read_reg_sel_i(read_reg_sel),
+    .conversion_data_ready_o(conversion_data_ready_o),
+    .post_conversion_delay_done_i(post_conversion_delay_done),
+    .post_conversion_delay_en_o(post_conversion_delay_en),
+    .post_conversion_delay_clear_o(post_conversion_delay_clear)
   );
 
   // t6: Delay from last SCLK edge for DIN to first SCLK rising edge for DOUT
@@ -523,6 +636,22 @@ module spi_transaction_layer (
     .Q(delay_t6_count_out)
   );
   assign delay_t6_done = (delay_t6_count_out == 10'd700);
+
+  // delay post-conversion for continuous conversions
+  // NOTE: need at least 1.8us based empirical measurements
+
+  logic [9:0] post_conversion_delay_count_out;
+  Counter #(.WIDTH(10)) post_conversion_delay_counter (
+    .clock(clock_i),
+    .en(post_conversion_delay_en),
+    .clear(post_conversion_delay_clear),
+    .load(),
+    .up(1'b1),
+    .D(10'b0),
+    .Q(post_conversion_delay_count_out)
+  );
+  assign post_conversion_delay_done = 
+    (post_conversion_delay_count_out == 10'd200);
 
   
 endmodule
