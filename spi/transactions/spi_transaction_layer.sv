@@ -35,7 +35,7 @@ function automatic transaction_t decode_transaction(logic [23:0] cmd);
 
 endfunction
 
-// TODO: Lots of repetitive code here, need to clean this up.
+// TODO: Lots of repetitive code here, need to clean this up (later).
 // Remember: D.R.Y.
 
 module spi_transaction_layer_fsm (
@@ -46,6 +46,7 @@ module spi_transaction_layer_fsm (
   input wire delay_t6_done_i,
   input wire [23:0] cmd_i,
   input logic post_conversion_delay_done_i,
+  input logic delay_t10_done_i,
 
   // Datapath control
   output logic spi_start_o,
@@ -61,6 +62,9 @@ module spi_transaction_layer_fsm (
 
   output logic post_conversion_delay_en_o,
   output logic post_conversion_delay_clear_o,
+
+  output logic delay_t10_en_o,
+  output logic delay_t10_clear_o,
 
   output logic done_o
 );
@@ -83,14 +87,13 @@ module spi_transaction_layer_fsm (
     RDATAC_SPI_TRANSFER_1,
     RDATAC_SPI_TRANSFER_2,
     RDATAC_SPI_TRANSFER_3,
-    // TODO: might need an intermediate delay state in between these two.
-    // Check MISO and DRDY_L signal traces from tests with the Saleae
     RDATAC_POST_CONVERSION_DELAY,
     RDATAC_WAIT_DRDY_C,
     RDATAC_SPI_TRANSFER_4,
 
     // SELFCAL
     SELFCAL_SPI_TRANSFER,
+    SELFCAL_WAIT_DRDY_LOW,
 
     // RREG
     RREG_SPI_TRANSFER_0,
@@ -103,6 +106,7 @@ module spi_transaction_layer_fsm (
     WREG_SPI_TRANSFER_1,
     WREG_SPI_TRANSFER_2,
     
+    WAIT_T10,
     DONE,     
     ILLEGAL_STATE
   } state_t;
@@ -158,7 +162,7 @@ module spi_transaction_layer_fsm (
       RDATA_SPI_TRANSFER_2:
         next_state = (spi_done_i) ? RDATA_SPI_TRANSFER_3 : RDATA_SPI_TRANSFER_2;
       RDATA_SPI_TRANSFER_3:
-        next_state = (spi_done_i) ? DONE : RDATA_SPI_TRANSFER_3;
+        next_state = (spi_done_i) ? WAIT_T10 : RDATA_SPI_TRANSFER_3;
 
       // RDATAC/SDATAC
       RDATAC_WAIT_DRDY:
@@ -211,20 +215,22 @@ module spi_transaction_layer_fsm (
           next_state = RDATAC_SPI_TRANSFER_1;
       end
       RDATAC_SPI_TRANSFER_4:
-        next_state = (spi_done_i) ? DONE : RDATAC_SPI_TRANSFER_4;
+        next_state = (spi_done_i) ? WAIT_T10 : RDATAC_SPI_TRANSFER_4;
 
 
       // SELFCAL
-      // TODO: calibration is only complete once DRDY_L goes low again
       // "DRDY goes high at the beginning of the calibration. It goes low after the calibration
       // completes and settled data is ready. Do not send additional commands after issuing 
       // this command until DRDY goes low indicating that the calibration is complete."
       // 
-      // TODO: don't need to assert CS_L for this to work.
+      // NOTE: we *technically* don't need to assert CS_L for this to work.
       // We just need to wait until calibration is finished for completedness.
       
       SELFCAL_SPI_TRANSFER:
-        next_state = (spi_done_i) ? DONE : SELFCAL_SPI_TRANSFER;
+        next_state = (spi_done_i) ? WAIT_T10 : SELFCAL_SPI_TRANSFER;
+
+      SELFCAL_WAIT_DRDY_LOW:
+        next_state = (~DRDY_L_i) ? DONE : SELFCAL_WAIT_DRDY_LOW;
 
       // RREG
       RREG_SPI_TRANSFER_0:
@@ -234,7 +240,7 @@ module spi_transaction_layer_fsm (
       RREG_WAIT_T6:
         next_state = (delay_t6_done_i) ? RREG_SPI_TRANSFER_2 : RREG_WAIT_T6;
       RREG_SPI_TRANSFER_2:
-        next_state = (spi_done_i) ? DONE : RREG_SPI_TRANSFER_2;
+        next_state = (spi_done_i) ? WAIT_T10 : RREG_SPI_TRANSFER_2;
 
       // WREG
       WREG_SPI_TRANSFER_0:
@@ -242,7 +248,17 @@ module spi_transaction_layer_fsm (
       WREG_SPI_TRANSFER_1:
         next_state = (spi_done_i) ? WREG_SPI_TRANSFER_2 : WREG_SPI_TRANSFER_1;
       WREG_SPI_TRANSFER_2:
-        next_state = (spi_done_i) ? DONE : WREG_SPI_TRANSFER_2;
+        next_state = (spi_done_i) ? WAIT_T10 : WREG_SPI_TRANSFER_2;
+
+      WAIT_T10: begin
+        // next_state = (delay_t10_done_i) ? DONE : WAIT_T10;
+        if (~delay_t10_done_i)
+          next_state = WAIT_T10;
+        else if (decoded_transaction == SELFCAL) 
+          next_state = SELFCAL_WAIT_DRDY_LOW;
+        else 
+          next_state = DONE;
+      end
 
       DONE: begin
         decoded_transaction = TRANSACTION_NONE;
@@ -270,9 +286,6 @@ module spi_transaction_layer_fsm (
 
   // ------------------------------------------
   // output generator
-  // TODO: I/O for register file select lines
-  // TODO: register file load signal
-
   // ------------------------------------------
 
   logic [3:0] reg_address;
@@ -293,9 +306,13 @@ module spi_transaction_layer_fsm (
     post_conversion_delay_en_o = 1'b0;
     post_conversion_delay_clear_o = 1'b0;
 
+    delay_t10_en_o = 1'b0;
+    delay_t10_clear_o = 1'b0;
+
     case (state)
 
       IDLE: begin
+        delay_t10_clear_o = 1'b1;
         if (start_i) begin
           case (decoded_transaction)
             SELFCAL: begin
@@ -423,7 +440,7 @@ module spi_transaction_layer_fsm (
           spi_start_o = 1'b1;
           tx_buffer_o = 8'h69;
         end
-      end
+      end      
 
       RDATAC_SPI_TRANSFER_3: begin
         CS_L_o = 1'b0;
@@ -477,6 +494,13 @@ module spi_transaction_layer_fsm (
       SELFCAL_SPI_TRANSFER: begin
         CS_L_o = 1'b0;
         tx_buffer_o = 8'hF0;
+      end
+
+      // deasserting CS_L here should be fine in theory.
+      // the SPI transfer is effectively done, we're just waiting on DRDY to go low
+      // so we can be absolutely sure that the calibration procedure is finished.
+      SELFCAL_WAIT_DRDY_LOW: begin
+        CS_L_o = 1'b1;
       end
       
       // RREG
@@ -536,10 +560,17 @@ module spi_transaction_layer_fsm (
       WREG_SPI_TRANSFER_2: begin
         CS_L_o = 1'b0;
       end
+
+      // just asserts CS_L waits long enough to satisfy t10 timing constraint
+      WAIT_T10: begin
+        CS_L_o = 1'b0;
+        delay_t10_en_o = 1'b1;
+      end
       
       DONE: begin
         done_o = 1'b1;
         CS_L_o = 1'b1;
+        delay_t10_clear_o = 1'b1;
 
         if (start_i) begin
           case (decoded_transaction)
@@ -595,10 +626,12 @@ module spi_transaction_layer (
   // FSM status
   logic delay_t6_done;
   logic post_conversion_delay_done;
+  logic delay_t10_done;
 
   // FSM control
   logic delay_t6_count_en, delay_t6_count_clear, DRDY_L;
   logic post_conversion_delay_en, post_conversion_delay_clear;
+  logic delay_t10_en, delay_t10_clear;
 
   spi_transaction_layer_fsm FSM (
     .clock_i(clock_i),
@@ -619,7 +652,10 @@ module spi_transaction_layer (
     .conversion_data_ready_o(conversion_data_ready_o),
     .post_conversion_delay_done_i(post_conversion_delay_done),
     .post_conversion_delay_en_o(post_conversion_delay_en),
-    .post_conversion_delay_clear_o(post_conversion_delay_clear)
+    .post_conversion_delay_clear_o(post_conversion_delay_clear),
+    .delay_t10_done_i(delay_t10_done),
+    .delay_t10_en_o(delay_t10_en),
+    .delay_t10_clear_o(delay_t10_clear)
   );
 
   // t6: Delay from last SCLK edge for DIN to first SCLK rising edge for DOUT
@@ -653,6 +689,21 @@ module spi_transaction_layer (
   assign post_conversion_delay_done = 
     (post_conversion_delay_count_out == 10'd200);
 
+  // t10: CS low after final SCLK falling edge
+  // t10 >= 1.04us
+
+  logic [9:0] delay_t10_counter_out;
+  Counter #(.WIDTH(10)) delay_t10_counter (
+    .clock(clock_i),
+    .en(delay_t10_en),
+    .clear(delay_t10_clear),
+    .load(),
+    .up(1'b1),
+    .D(10'b0),
+    .Q(delay_t10_counter_out)
+  );
+  assign delay_t10_done = 
+    (delay_t10_counter_out == 10'd110);
   
 endmodule
 

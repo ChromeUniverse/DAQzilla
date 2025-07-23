@@ -216,11 +216,16 @@ module spi_top_tb;
           drdy_count++;
         end
 
-        // TODO: this is broken.
-        // TODO: Reimplement this to assert continuous_stop after at least one full conversion.
-        // if (continuous_mode && dut.System_Controller.FSM.state == 4'd6 /* CONTINUOUS_RDATAC */)
-        //   continuous_stop = 1;
+        if (r == ROUTINE_CALIBRATE) begin
+          // Calibration routine
+          // state is WAIT_T10 and next state is SELFCAL_WAIT_DRDY_LOW
+          wait(dut.handler.FSM.state == 6'd25 & dut.handler.FSM.next_state == 6'd17);
+          DRDY_L = 1'b1;
+          #4000;
+          DRDY_L = 1'b0;
+        end
 
+        // TODO: Reimplement this to assert continuous_stop after at least one full conversion.
         if (continuous_mode) begin
           repeat (2000) @(posedge clock);
           repeat (2000) @(posedge clock);
@@ -345,6 +350,7 @@ module spi_top_tb;
     reset = 0;
 
     $display("Running CALIBRATE...");
+    pulse_DRDY();
     run_routine(ROUTINE_CALIBRATE);
 
     // $display("Running READBACK...");
