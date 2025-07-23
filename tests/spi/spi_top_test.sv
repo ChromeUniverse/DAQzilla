@@ -6,16 +6,17 @@ module spi_top_tb;
   // Clock and reset
   logic clock, reset;
   initial clock = 0;
-  always #5 clock = ~clock; // 100MHz clock
+  always #5 clock = ~clock;
 
-  // SPI interface
-  logic MISO;
+  // ADS1256 interface
+  logic MISO, DRDY_L;
   logic MOSI, SCLK, auto_CS, CS_L;
 
-  // Transaction interface
-  logic transaction_start;
-  logic transaction_done;
-  logic [23:0] command;
+  // System controller interface
+  logic routine_start, routine_done;
+  routine_t routine;
+  logic [23:0] data_out;
+  logic continuous_stop;
 
   // Commands
   localparam CMD_NONE_BINARY = 24'h00_00_00;
@@ -27,25 +28,23 @@ module spi_top_tb;
   localparam CMD_RREG     = 24'h17_00_69;
   localparam CMD_WREG     = 24'h57_00_69;
 
-  // DRDY_L from ADC
-  logic DRDY_L;
-
   logic [23:0] conversion_data_out;
 
   // DUT instantiation
   spi_top dut (
     .clock_i(clock),
     .reset_i(reset),
-    .DRDY_L_i(DRDY_L),
-    .transaction_start_i(transaction_start),
-    .cmd_i(command),
-    .transaction_done_o(transaction_done),
+    .routine_start_i(routine_start),
+    .routine_done_o(routine_done),
+    .routine_i(routine),
+    .continuous_stop_i(continuous_stop),
+    .data_o(data_out),
     .MISO_i(MISO),
+    .DRDY_L_i(DRDY_L),
     .MOSI_o(MOSI),
     .SCLK_o(SCLK),
     .auto_CS_o(auto_CS),
-    .CS_L_o(CS_L),
-    .data_o(conversion_data_out)
+    .CS_L_o(CS_L)
   );
 
   // 
@@ -54,6 +53,11 @@ module spi_top_tb;
 
   // TODO: DRDY_L controlled by number of bytes shifted out + delay
   // TODO: need logic for RREG and WREG commands
+  // TODO: calibration is only complete once DRDY_L goes low again
+  // "DRDY goes high at the beginning of the calibration. It goes low after the calibration
+  // completes and settled data is ready. Do not send additional commands after issuing 
+  // this command until DRDY goes low indicating that the calibration is complete."
+  // 
   logic [7:0] MISO_data = 8'h00;
   logic [7:0] MOSI_data = 8'h00;
   logic [2:0] dout_bit_index = 4'd7;  // Start with MSB
@@ -167,19 +171,21 @@ module spi_top_tb;
   end
 
   // Task to run one transaction
-  task run_transaction(logic [23:0] cmd);
-    begin
-      @(negedge clock);
-      command = cmd;
-      transaction_start = 1;
-      @(negedge clock);
-      transaction_start = 0;
+  // task run_transaction(logic [23:0] cmd);
+  //   begin
+  //     @(negedge clock);
+  //     command = cmd;
+  //     transaction_start = 1;
+  //     @(negedge clock);
+  //     transaction_start = 0;
       
-      // Wait for FSM to finish
-      wait (transaction_done);
-      repeat (2) @(posedge clock);
-    end
-  endtask
+  //     // Wait for FSM to finish
+  //     wait (transaction_done);
+  //     repeat (2) @(posedge clock);
+  //   end
+  // endtask
+
+  logic [31:0] drdy_count;
 
   // DRDY pulse generator
   task pulse_DRDY();
@@ -191,93 +197,169 @@ module spi_top_tb;
     end
   endtask
 
+  // --- Task to trigger one routine ---
+  task run_routine(routine_t r, bit continuous_mode = 0);
+    begin
+      @(negedge clock);
+      routine = r;
+      routine_start = 1;
+
+      @(negedge clock);
+      routine_start = 0;
+
+      drdy_count = 0;
+      repeat (200) begin
+        @(negedge clock);
+
+        if (~DRDY_L && !CS_L) begin
+          pulse_DRDY();
+          drdy_count++;
+        end
+
+        // TODO: this is broken.
+        // TODO: Reimplement this to assert continuous_stop after at least one full conversion.
+        // if (continuous_mode && dut.System_Controller.FSM.state == 4'd6 /* CONTINUOUS_RDATAC */)
+        //   continuous_stop = 1;
+
+        if (continuous_mode) begin
+          repeat (2000) @(posedge clock);
+          repeat (2000) @(posedge clock);
+          continuous_stop = 1;
+          // repeat (2000) @(posedge clock);
+        end
+
+        wait(routine_done);
+        $display("Routine %0d done after %0d DRDY pulses. Data = %0h", r, drdy_count, data_out);
+        repeat (500) @(posedge clock);
+        break;
+      end
+
+      routine = ROUTINE_NONE;
+      continuous_stop = 0;
+    end
+  endtask  
+
   // Stimulus
+  // initial begin
+  //   // Initialize
+  //   reset = 1;
+  //   transaction_start = 0;
+  //   MISO = 1'b0;
+  //   DRDY_L = 1;
+  //   @(negedge clock);
+  //   reset = 0;
+
+  //   // TODO: sweep thru multiple commands to test this thoroughly
+
+  //   // RDATA
+
+  //   $display("Starting RDATA transaction...");
+  //   fork
+  //     begin
+  //       #1000 pulse_DRDY();
+  //       #33333 pulse_DRDY();
+  //       #33333 pulse_DRDY();
+  //       #33333 pulse_DRDY();
+  //     end
+  //     begin
+  //       run_transaction(CMD_RDATA);
+  //     end
+  //   join
+
+  //   // RDATAC
+
+  //   // $display("Starting RDATAC transaction...");
+  //   // fork
+  //   //   begin
+  //   //     #1000 pulse_DRDY();
+  //   //     #3000 pulse_DRDY();
+  //   //     #3000 pulse_DRDY();
+  //   //     #3000 pulse_DRDY();
+  //   //     #3000 pulse_DRDY(); // needed for SDATAC condition
+  //   //   end
+  //   //   begin
+  //   //     // mannually run RDATAC transation
+  //   //     @(negedge clock);
+  //   //     command = CMD_RDATAC;
+  //   //     transaction_start = 1;
+  //   //     @(negedge clock);
+  //   //     transaction_start = 0;
+
+  //   //     // Wait for 3 complete conversions
+
+  //   //     wait (dut.handler.FSM.state == dut.handler.FSM.RDATAC_WAIT_DRDY_C);
+  //   //     $display("1st conversion complete");
+  //   //     repeat (2) @(posedge clock);
+  //   //     wait (dut.handler.FSM.state == dut.handler.FSM.RDATAC_WAIT_DRDY_C);
+  //   //     $display("2nd conversion complete");
+  //   //     repeat (2) @(posedge clock);
+  //   //     wait (dut.handler.FSM.state == dut.handler.FSM.RDATAC_WAIT_DRDY_C);
+  //   //     $display("3rd conversion complete");
+
+  //   //     repeat (2) @(posedge clock);
+
+  //   //     // issue SDATAC command
+  //   //     command = CMD_SDATAC;
+  //   //     wait (transaction_done);
+
+  //   //     repeat (100) @(posedge clock);
+  //   //   end
+  //   // join
+
+  //   // SELFCAL
+
+  //   // $display("Starting RREG transaction...");
+  //   // fork
+  //   //   run_transaction(CMD_SELFCAL);
+  //   // join
+
+  //   // RREG
+
+  //   // $display("Starting RREG transaction...");
+  //   // fork
+  //   //   run_transaction(CMD_RREG);
+  //   // join
+
+  //   // WREG
+
+  //   // $display("Starting WREG transaction...");
+  //   // fork
+  //   //   run_transaction(CMD_WREG);
+  //   // join
+
+  //   $display("Test complete.");
+  //   $finish;
+  // end
+
+
+  // --- Main test sequence ---
   initial begin
-    // Initialize
     reset = 1;
-    transaction_start = 0;
-    MISO = 1'b0;
+    routine_start = 0;
     DRDY_L = 1;
+    MISO = 1'b0;
+    continuous_stop = 0;
+    MISO_data = 8'hAA;
+
     @(negedge clock);
     reset = 0;
 
-    // TODO: sweep thru multiple commands to test this thoroughly
+    $display("Running CALIBRATE...");
+    run_routine(ROUTINE_CALIBRATE);
 
-    // RDATA
+    // $display("Running READBACK...");
+    // run_routine(ROUTINE_READBACK);
 
-    $display("Starting RDATA transaction...");
-    fork
-      begin
-        #1000 pulse_DRDY();
-        #33333 pulse_DRDY();
-        #33333 pulse_DRDY();
-        #33333 pulse_DRDY();
-      end
-      begin
-        run_transaction(CMD_RDATA);
-      end
-    join
+    // $display("Running SINGLE...");
+    // pulse_DRDY();
+    // run_routine(ROUTINE_SINGLE);
 
-    // RDATAC
+    // $display("Running CONTINUOUS...");
+    // repeat (3) pulse_DRDY();
+    // run_routine(ROUTINE_CONTINUOUS, 1);
 
-    // $display("Starting RDATAC transaction...");
-    // fork
-    //   begin
-    //     #1000 pulse_DRDY();
-    //     #3000 pulse_DRDY();
-    //     #3000 pulse_DRDY();
-    //     #3000 pulse_DRDY();
-    //     #3000 pulse_DRDY(); // needed for SDATAC condition
-    //   end
-    //   begin
-    //     // mannually run RDATAC transation
-    //     @(negedge clock);
-    //     command = CMD_RDATAC;
-    //     transaction_start = 1;
-    //     @(negedge clock);
-    //     transaction_start = 0;
-
-    //     // Wait for 3 complete conversions
-
-    //     wait (dut.handler.FSM.state == dut.handler.FSM.RDATAC_WAIT_DRDY_C);
-    //     $display("1st conversion complete");
-    //     repeat (2) @(posedge clock);
-    //     wait (dut.handler.FSM.state == dut.handler.FSM.RDATAC_WAIT_DRDY_C);
-    //     $display("2nd conversion complete");
-    //     repeat (2) @(posedge clock);
-    //     wait (dut.handler.FSM.state == dut.handler.FSM.RDATAC_WAIT_DRDY_C);
-    //     $display("3rd conversion complete");
-
-    //     repeat (2) @(posedge clock);
-
-    //     // issue SDATAC command
-    //     command = CMD_SDATAC;
-    //     wait (transaction_done);
-
-    //     repeat (100) @(posedge clock);
-    //   end
-    // join
-
-    // SELFCAL
-
-    // $display("Starting RREG transaction...");
-    // fork
-    //   run_transaction(CMD_SELFCAL);
-    // join
-
-    // RREG
-
-    // $display("Starting RREG transaction...");
-    // fork
-    //   run_transaction(CMD_RREG);
-    // join
-
-    // WREG
-
-    // $display("Starting WREG transaction...");
-    // fork
-    //   run_transaction(CMD_WREG);
-    // join
+    // $display("Running ILLEGAL...");
+    // run_routine(ROUTINE_ILLEGAL);
 
     $display("Test complete.");
     $finish;

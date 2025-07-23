@@ -1,20 +1,23 @@
 `default_nettype none
 
 module spi_top (
-  input logic clock_i, reset_i,
-  input logic DRDY_L_i,
+  input logic clock_i, reset_i,  
 
-  // Transaction handler
-  input logic transaction_start_i,
-  input [23:0] cmd_i,
-  output logic transaction_done_o,
+  // System controller interface
+  input logic routine_start_i,
+  output logic routine_done_o,
+  input routine_t routine_i,
+  input logic continuous_stop_i,
 
   // Conversion data
   output logic [23:0] data_o,
 
-  // SPI interface
+  // ADS1256 interface (SPI + interrupts)
   input logic MISO_i,
+  input logic DRDY_L_i,
   output logic MOSI_o, SCLK_o, auto_CS_o, CS_L_o
+
+  // TODO: AXI-Stream ports
 );
 
   logic spi_start, spi_done;
@@ -39,15 +42,19 @@ module spi_top (
 
   logic [1:0] reg_read_sel;
   logic reg_read_load;
+  logic transaction_start, transaction_done;
+  logic [23:0] command;
+  logic conversion_ready;
 
   spi_transaction_layer handler (
     .clock_i(clock_i),
     .reset_i(reset_i),
 
     // Transaction control interface
-    .start_i(transaction_start_i),
-    .done_o(transaction_done_o),
-    .cmd_i(cmd_i),
+    .start_i(transaction_start),
+    .done_o(transaction_done),
+    .cmd_i(command),
+    .conversion_data_ready_o(conversion_ready),
 
     // Register file control interface
     .read_reg_sel(reg_read_sel),
@@ -80,5 +87,18 @@ module spi_top (
   );
 
   // TODO: ADS1256 system controller
+
+  ADS1256_System_Controller System_Controller (
+    .clock_i(clock_i),
+    .reset_i(reset_i),
+    .start_i(routine_start_i),
+    .done_o(routine_done_o),
+    .routine_i(routine_i),
+    .command_o(command),
+    .transaction_start_o(transaction_start),
+    .transaction_done_i(transaction_done),
+    .continuous_stop_i(continuous_stop_i),
+    .conversion_ready_i(conversion_ready)
+  );
   
 endmodule
