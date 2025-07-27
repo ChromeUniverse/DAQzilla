@@ -46,7 +46,8 @@ module spi_fsm (
           next_state = TRANSFER;
         else 
           next_state = IDLE;
-      
+      default:
+        next_state = ILLEGAL_STATE;
     endcase
   end
 

@@ -198,7 +198,7 @@ module spi_top_tb;
   endtask
 
   // --- Task to trigger one routine ---
-  task run_routine(routine_t r, bit continuous_mode = 0);
+  task run_routine(routine_t r);
     begin
       @(negedge clock);
       routine = r;
@@ -226,11 +226,21 @@ module spi_top_tb;
         end
 
         // TODO: Reimplement this to assert continuous_stop after at least one full conversion.
-        if (continuous_mode) begin
-          repeat (2000) @(posedge clock);
-          repeat (2000) @(posedge clock);
+        if (r == ROUTINE_CONTINUOUS) begin
+          wait(dut.handler.FSM.state == 7'h0d); // RADATAC_POST_CONVERSION_DELAY
+          DRDY_L = 1'b1;
+          repeat (500) @(negedge clock);
+          DRDY_L = 1'b0;
+          
+          repeat (500) @(negedge clock);
           continuous_stop = 1;
-          // repeat (2000) @(posedge clock);
+          
+          wait(dut.handler.FSM.state == 7'h0d); // RADATAC_POST_CONVERSION_DELAY
+          DRDY_L = 1'b1;
+          // stop signal issues halfway through DRDY_L high 
+          repeat (250) @(negedge clock);          
+          repeat (250) @(negedge clock);
+          DRDY_L = 1'b0;          
         end
 
         wait(routine_done);
@@ -362,7 +372,7 @@ module spi_top_tb;
 
     // $display("Running CONTINUOUS...");
     // repeat (3) pulse_DRDY();
-    // run_routine(ROUTINE_CONTINUOUS, 1);
+    // run_routine(ROUTINE_CONTINUOUS);
 
     // $display("Running ILLEGAL...");
     // run_routine(ROUTINE_ILLEGAL);

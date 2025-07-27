@@ -1,4 +1,6 @@
-`default_nettype none
+// `default_nettype none
+
+import spi_types_pkg::*;
 
 module spi_top (
   input logic clock_i, reset_i,  
@@ -83,10 +85,8 @@ module spi_top (
     .clear_i(reset_i),
     .in_i(spi_rx_buffer),
     .RREG_out_o(reg_file_RREG),
-    .conversion_data_o(reg_file_conversion_data)
+    .conversion_data_o(data_o)
   );
-
-  // TODO: ADS1256 system controller
 
   ADS1256_System_Controller System_Controller (
     .clock_i(clock_i),

@@ -45,8 +45,8 @@ module spi_transaction_layer_fsm (
   input wire start_i, spi_done_i, DRDY_L_i, 
   input wire delay_t6_done_i,
   input wire [23:0] cmd_i,
-  input logic post_conversion_delay_done_i,
-  input logic delay_t10_done_i,
+  input wire post_conversion_delay_done_i,
+  input wire delay_t10_done_i,
 
   // Datapath control
   output logic spi_start_o,
@@ -123,23 +123,65 @@ module spi_transaction_layer_fsm (
   end
 
   // ------------------------------------------
+  // transaction latch: stores command and decoded transaction 
+  // ------------------------------------------
+
+  always_ff @(posedge clock_i) begin: command_latch
+    if (reset_i) begin
+      decoded_transaction <= TRANSACTION_NONE;
+      latched_command <= 24'h0;
+    end else begin
+      case (state)
+        IDLE: begin
+          if (start_i) begin
+            latched_command <= cmd_i;
+            decoded_transaction <= decode_transaction(cmd_i);
+          end else begin
+            decoded_transaction <= TRANSACTION_NONE;
+          end
+        end
+
+        RDATAC_POST_CONVERSION_DELAY: begin
+          if (post_conversion_delay_done_i) begin
+            latched_command <= cmd_i;
+            decoded_transaction <= decode_transaction(cmd_i);
+          end
+        end
+
+        RDATAC_WAIT_DRDY_C: begin
+          // TODO: double-check if we need to case on DRDY_L_i here
+          // if (~DRDY_L_i) begin
+          latched_command <= cmd_i;
+          decoded_transaction <= decode_transaction(cmd_i);
+          // end
+        end
+
+        DONE: begin
+          if (start_i) begin
+            latched_command <= cmd_i;
+            decoded_transaction <= decode_transaction(cmd_i);
+          end
+        end
+
+        default: ; // Hold values naturally
+      endcase
+    end
+  end
+
+  // ------------------------------------------
   // next state generator
   // ------------------------------------------
 
   // TODO: add references for each state from SPI Command Definitions in datasheet
 
   always_comb begin: next_state_generator
+    next_state = IDLE;
     case (state)
       IDLE: begin
-        decoded_transaction = TRANSACTION_NONE;
-
         if (~start_i)
           next_state = IDLE;
         else begin
-          latched_command = cmd_i;
-          decoded_transaction = decode_transaction(cmd_i);
-
-          case (decoded_transaction)
+          case (decode_transaction(cmd_i))
             RDATA:    next_state = RDATA_WAIT_DRDY;
             RDATAC:   next_state = RDATAC_WAIT_DRDY;
             SELFCAL:  next_state = SELFCAL_SPI_TRANSFER;
@@ -178,12 +220,9 @@ module spi_transaction_layer_fsm (
       RDATAC_SPI_TRANSFER_3:
         next_state = (spi_done_i) ? RDATAC_POST_CONVERSION_DELAY : RDATAC_SPI_TRANSFER_3;
       RDATAC_POST_CONVERSION_DELAY: begin
-        // next_state = (post_conversion_delay_done_i) ? RDATAC_WAIT_DRDY_C : RDATAC_POST_CONVERSION_DELAY;
         if (~post_conversion_delay_done_i) 
           next_state = RDATAC_POST_CONVERSION_DELAY;
         else begin
-          decoded_transaction = decode_transaction(cmd_i);
-          latched_command = cmd_i;
           // data not ready -- keep waiting
           if (DRDY_L_i) 
             next_state = RDATAC_WAIT_DRDY_C;
@@ -191,7 +230,7 @@ module spi_transaction_layer_fsm (
           // TODO: maybe require `start_i` to be asserted here as well?
           // 
           // data ready and stop command issued
-          else if (decoded_transaction == SDATAC)
+          else if (decode_transaction(cmd_i) == SDATAC)
             next_state = RDATAC_SPI_TRANSFER_4;
           // data ready and no stop command issued
           else
@@ -199,8 +238,6 @@ module spi_transaction_layer_fsm (
         end
       end
       RDATAC_WAIT_DRDY_C: begin
-        decoded_transaction = decode_transaction(cmd_i);
-        latched_command = cmd_i;
         // data not ready -- keep waiting
         if (DRDY_L_i) 
           next_state = RDATAC_WAIT_DRDY_C;
@@ -208,7 +245,7 @@ module spi_transaction_layer_fsm (
         // TODO: maybe require `start_i` to be asserted here as well?
         // 
         // data ready and stop command issued
-        else if (decoded_transaction == SDATAC)
+        else if (decode_transaction(cmd_i) == SDATAC)
           next_state = RDATAC_SPI_TRANSFER_4;
         // data ready and no stop command issued
         else
@@ -261,15 +298,10 @@ module spi_transaction_layer_fsm (
       end
 
       DONE: begin
-        decoded_transaction = TRANSACTION_NONE;
-        latched_command = cmd_i;
-
         if (~start_i)
           next_state = IDLE;
-        else           
-          decoded_transaction = decode_transaction(cmd_i);
-
-          case (decoded_transaction)
+        else begin
+          case (decode_transaction(cmd_i))
             RDATA:    next_state = RDATA_WAIT_DRDY;
             RDATAC:   next_state = RDATAC_WAIT_DRDY;
             SELFCAL:  next_state = SELFCAL_SPI_TRANSFER;
@@ -277,19 +309,16 @@ module spi_transaction_layer_fsm (
             WREG:     next_state = WREG_SPI_TRANSFER_0;
             default:  next_state = IDLE;
           endcase
+        end
       end
 
-      default:
-        next_state = ILLEGAL_STATE;
+      default: ;
     endcase
   end
 
   // ------------------------------------------
   // output generator
   // ------------------------------------------
-
-  logic [3:0] reg_address;
-  logic [7:0] WREG_data;
 
   always_comb begin: output_generator
     spi_start_o = 1'b0;
@@ -314,20 +343,18 @@ module spi_transaction_layer_fsm (
       IDLE: begin
         delay_t10_clear_o = 1'b1;
         if (start_i) begin
-          case (decoded_transaction)
+          case (decode_transaction(cmd_i))
             SELFCAL: begin
               spi_start_o = 1'b1;
               tx_buffer_o = 8'hF0;
             end
             RREG: begin
               spi_start_o = 1'b1;
-              reg_address = latched_command[19:16];
-              tx_buffer_o = {4'h1, reg_address};
+              tx_buffer_o = {4'h1, cmd_i[19:16]};
             end
             WREG: begin
               spi_start_o = 1'b1;
-              reg_address = latched_command[19:16];
-              tx_buffer_o = {4'h5, reg_address};
+              tx_buffer_o = {4'h5, cmd_i[19:16]};
             end
             default: ;
           endcase
@@ -479,9 +506,13 @@ module spi_transaction_layer_fsm (
         // data ready indicates an SPI transfer is about to start
         if (~DRDY_L_i) begin
           spi_start_o = 1'b1;
+          // stop command issued
           if (decoded_transaction == SDATAC) begin
             tx_buffer_o = 8'h0F;
-          end
+          end 
+          // keep continuous conversions
+          else
+            tx_buffer_o = 8'h69;
         end
       end
 
@@ -552,8 +583,7 @@ module spi_transaction_layer_fsm (
         CS_L_o = 1'b0;
         if (spi_done_i) begin          
           spi_start_o = 1'b1;
-          WREG_data = latched_command[7:0];
-          tx_buffer_o = WREG_data;
+          tx_buffer_o = latched_command[7:0];
         end
       end
 
@@ -573,28 +603,25 @@ module spi_transaction_layer_fsm (
         delay_t10_clear_o = 1'b1;
 
         if (start_i) begin
-          case (decoded_transaction)
+          case (decode_transaction(cmd_i))
             SELFCAL: begin
               spi_start_o = 1'b1;
               tx_buffer_o = 8'hF0;
             end
             RREG: begin
               spi_start_o = 1'b1;
-              reg_address = latched_command[19:16];
-              tx_buffer_o = {4'h1, reg_address};
+              tx_buffer_o = {4'h1, cmd_i[19:16]};
             end
             WREG: begin
               spi_start_o = 1'b1;
-              reg_address = latched_command[19:16];
-              tx_buffer_o = {4'h5, reg_address};
+              tx_buffer_o = {4'h5, cmd_i[19:16]};
             end
             default: ;
           endcase
         end
       end
       
-      default:
-        ;
+      default: ;
     endcase
   end
   

@@ -1,3 +1,7 @@
+`default_nettype none
+
+import spi_types_pkg::*;
+
 module ADS1256_System_Controller_tb;
 
   // DUT inputs
