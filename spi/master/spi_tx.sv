@@ -12,13 +12,14 @@ module spi_tx #(
 
   input  wire [WIDTH-1:0] tx_buffer_i,
 
-  output wire             MOSI_o,
-  output wire             tx_done_o
+  output wire             MOSI_o
 );
 
-  // SCLK rising edge trigger
+  // SCLK rising edge trigger:
+  // Used for SPI Mode 1. Bits are set up well before the falling edge
+  // to ensure setup time constraints are met.
 
-  logic SCLK_rising_edge, SCLK_falling_edge;
+  logic SCLK_rising_edge;
   edge_trigger #(.DETECT_POS_EDGE(1)) posedge_trigger (
     .clk(clock_i),
     .reset(reset_i),
@@ -26,14 +27,7 @@ module spi_tx #(
     .pulse_out(SCLK_rising_edge)
   );
 
-  edge_trigger #(.DETECT_POS_EDGE(0)) negedge_trigger (
-    .clk(clock_i),
-    .reset(reset_i),
-    .signal_in(SCLK_i),
-    .pulse_out(SCLK_falling_edge)
-  );
-
-  // Shift register
+  // PIPO Shift register
   logic [WIDTH-1:0] tx_buffer_out;
   ShiftRegisterPIPO #(.WIDTH(WIDTH)) tx_buffer (
     .en   (tx_en_i & SCLK_rising_edge),
@@ -44,7 +38,10 @@ module spi_tx #(
     .Q    (tx_buffer_out)
   );
 
-  // MOSI buffer register
+  // MOSI buffer register:
+  // MSB of shift register above is shifted into this 1-bit
+  // register before being put on the MOSI line.
+
   logic mosi_reg;
   always_ff @(posedge clock_i) begin
     if (reset_i)
@@ -54,19 +51,5 @@ module spi_tx #(
   end
 
   assign MOSI_o = tx_en_i ? mosi_reg : 1'b0;
-
-  // Bit counter
-  logic [$clog2(WIDTH):0] tx_counter_value;
-  Counter #(.WIDTH($clog2(WIDTH)+1)) tx_counter (
-    .en   (tx_en_i & SCLK_falling_edge),
-    .clear(~tx_en_i),  // TODO: optionally override
-    .load (),
-    .up   (1'b1),
-    .clock(clock_i),
-    .D    ('0),
-    .Q    (tx_counter_value)
-  );
-
-  assign tx_done_o = (tx_counter_value == WIDTH);
 
 endmodule: spi_tx

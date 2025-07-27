@@ -3,18 +3,16 @@
 module spi_rx_test;
 
   logic clock, reset, rx_en, SCLK, MISO;
-  logic [23:0] rx_data;
-  logic rx_done;
+  logic [7:0] rx_data;
 
   // DUT
-  spi_rx #(.WIDTH(24)) dut (
+  spi_rx #(.WIDTH(8)) dut (
     .clock_i   (clock),
     .reset_i   (reset),
     .rx_en_i   (rx_en),
     .SCLK_i    (SCLK),
     .MISO_i    (MISO),
-    .rx_data_o (rx_data),
-    .rx_done_o (rx_done)
+    .rx_data_o (rx_data)
   );
 
   // Clock generation: 100 MHz
@@ -24,8 +22,6 @@ module spi_rx_test;
   end
 
   initial begin
-    // $dumpfile("spi_rx_test.vcd");
-    // $dumpvars(0, spi_rx_test);
     clock = 0;
     reset = 1;
     rx_en = 0;
@@ -52,6 +48,7 @@ module spi_rx_test;
       #40 SCLK = 0;
       #0; // wait between clocks
     end
+    #80;
   endtask
 
 endmodule : spi_rx_test
