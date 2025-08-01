@@ -1,4 +1,4 @@
-`default_nettype none
+// `default_nettype none
 
 // ==========================================================================
 // CRC Generation Unit - Linear Feedback Shift Register implementation
